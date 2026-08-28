@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: ridex360-backend
+    env: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput"
+    startCommand: "python manage.py migrate && python manage.py ensure_superuser && python manage.py seed_demo && gunicorn ridex360.wsgi"
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: ".onrender.com"
+      - key: DJANGO_SUPERUSER_USERNAME
+        value: RideX360
+      - key: DJANGO_SUPERUSER_PASSWORD
+        sync: false
+      - key: DJANGO_SUPERUSER_EMAIL
+        value: admin@ridex360.app
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ridex360-db
+          property: connectionString
+
+databases:
+  - name: ridex360-db
+    plan: free
