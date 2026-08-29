@@ -31,4 +31,15 @@ urlpatterns = [
         "driver/trips/<uuid:trip_id>/passengers/<uuid:trip_passenger_id>/no-show/",
         views.PassengerNoShowView.as_view(), name="trip-passenger-no-show",
     ),
+
+        path(
+        "driver/trips/<uuid:trip_id>/passengers/<uuid:trip_passenger_id>/no-show/",
+        views.PassengerNoShowView.as_view(), name="trip-passenger-no-show",
+    ),
+
+    # Traffic / alternate route
+    path("driver/trips/<uuid:trip_id>/traffic/detect/", views.DetectTrafficView.as_view(), name="trip-traffic-detect"),
+    path("driver/trips/<uuid:trip_id>/traffic/use-alternate/", views.UseAlternateRouteView.as_view(), name="trip-traffic-alt"),
+    path("driver/trips/<uuid:trip_id>/traffic/clear/", views.ClearTrafficView.as_view(), name="trip-traffic-clear"),
 ]
+

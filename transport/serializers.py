@@ -30,7 +30,10 @@ class TripStopSerializer(serializers.ModelSerializer):
         trip = obj.trip
         if trip.last_lat is None:
             return None
-        return estimate_eta_minutes(trip.last_lat, trip.last_lng, obj.stop.latitude, obj.stop.longitude)
+        return estimate_eta_minutes(
+            trip.last_lat, trip.last_lng, obj.stop.latitude, obj.stop.longitude,
+            traffic_detected=trip.traffic_detected, alt_route_active=trip.alt_route_active,
+        )
 
 
 class TripPassengerSerializer(serializers.ModelSerializer):
@@ -55,6 +58,7 @@ class TripSerializer(serializers.ModelSerializer):
             "driver", "driver_name", "is_replacement_driver",
             "started_at", "completed_at",
             "last_lat", "last_lng", "last_ping_at",
+            "traffic_detected", "alt_route_active",
             "trip_stops", "trip_passengers",
         ]
 

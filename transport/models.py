@@ -175,6 +175,12 @@ class Trip(models.Model):
         related_name="trips", limit_choices_to={"role": "driver"},
     )
     is_replacement_driver = models.BooleanField(default=False)
+        # Traffic / alternate-route scenario. traffic_detected simulates a
+    # slowdown on the current route; alt_route_active means the driver
+    # has switched to a faster alternative. Both feed into the ETA
+    # calculation in eta.py rather than being purely cosmetic flags.
+    traffic_detected = models.BooleanField(default=False)
+    alt_route_active = models.BooleanField(default=False)
 
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)

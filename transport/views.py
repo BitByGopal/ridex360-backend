@@ -222,3 +222,53 @@ class PassengerNoShowView(APIView):
         tp.status = TripPassenger.Status.NO_SHOW
         tp.save()
         return Response(TripSerializer(trip).data)
+
+
+
+
+    
+# ---------------------------------------------------------------------
+# Traffic / alternate-route scenario
+# ---------------------------------------------------------------------
+
+class DetectTrafficView(APIView):
+    """
+    Simulates the platform detecting heavy traffic on the current
+    route (in production this would come from a real traffic API).
+    Immediately affects ETA calculations via eta.py.
+    """
+
+    permission_classes = [IsDriver]
+
+    def post(self, request, trip_id):
+        trip = get_object_or_404(Trip, id=trip_id, driver=request.user)
+        trip.traffic_detected = True
+        trip.alt_route_active = False
+        trip.save()
+        return Response(TripSerializer(trip).data)
+
+
+class UseAlternateRouteView(APIView):
+    """Driver accepts the suggested alternate route -- clears the
+    traffic flag and applies the faster-route ETA multiplier instead."""
+
+    permission_classes = [IsDriver]
+
+    def post(self, request, trip_id):
+        trip = get_object_or_404(Trip, id=trip_id, driver=request.user)
+        trip.alt_route_active = True
+        trip.save()
+        return Response(TripSerializer(trip).data)
+
+
+class ClearTrafficView(APIView):
+    """Resets both flags -- lets the demo be replayed without restarting the trip."""
+
+    permission_classes = [IsDriver]
+
+    def post(self, request, trip_id):
+        trip = get_object_or_404(Trip, id=trip_id, driver=request.user)
+        trip.traffic_detected = False
+        trip.alt_route_active = False
+        trip.save()
+        return Response(TripSerializer(trip).data)
