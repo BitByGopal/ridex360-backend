@@ -218,6 +218,10 @@ class TripStop(models.Model):
     stop = models.ForeignKey(Stop, on_delete=models.CASCADE, related_name="+")
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING)
     arrived_at = models.DateTimeField(null=True, blank=True)
+    # Set once, when the trip starts (see StartTripView) -- the
+    # "promised" arrival time, independent of live traffic conditions.
+    # Compared against the live ETA to compute and display delay.
+    scheduled_arrival_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["stop__sequence"]

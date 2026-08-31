@@ -1,20 +1,29 @@
 """
-Simple haversine-based ETA estimate for V1.
+ETA calculation for V1 -- haversine-distance-based, not a real routing
+engine. Good enough to demo and validate the product loop; swap for a
+real routing/traffic API (Google Routes, etc.) once there's budget and
+real usage data to justify it.
 
-This is intentionally NOT a real routing engine -- it estimates
-straight-line distance from the vehicle's last known position to a
-stop, divided by an assumed average speed. Good enough to demo and to
-validate the product loop; swap for a real routing/traffic API
-(Google Routes, etc.) once there's budget and real usage data to
-justify it (see the brief's AI/ML + routing sections).
+Two distinct numbers, per the product spec:
 
-Traffic/alternate-route scenario: rather than a purely cosmetic toggle,
-traffic_detected and alt_route_active actually adjust the effective
-speed used in the ETA calculation, so the numbers shown in the app
-change consistently with the scenario the driver has triggered.
+- SCHEDULED arrival: computed once, when the driver starts the trip,
+  using cumulative distance along the route's stop sequence at the
+  baseline average speed. This never changes during the trip -- it's
+  "what we told the passenger to expect."
+
+- LIVE arrival: recalculated on every request from the vehicle's last
+  known GPS position, factoring in traffic_detected/alt_route_active.
+  This is "what's actually going to happen right now."
+
+The difference between the two is the delay shown to passengers.
+Both are served as absolute datetimes from the backend (not just
+relative minutes), so Parent, Passenger, Driver, and Organization
+interfaces all read the same numbers instead of each computing their
+own.
 """
 
 import math
+from datetime import timedelta
 
 AVERAGE_SPEED_KMH = 22  # rough urban/school-route average
 TRAFFIC_SPEED_MULTIPLIER = 0.55   # current route, heavy traffic
@@ -46,3 +55,26 @@ def estimate_eta_minutes(from_lat, from_lng, to_lat, to_lng, traffic_detected=Fa
     speed = effective_speed_kmh(traffic_detected, alt_route_active)
     hours = distance_km / speed
     return max(1, round(hours * 60))
+
+
+def compute_scheduled_arrivals(stops, start_time):
+    """
+    stops: an ordered iterable of Stop objects (by .sequence), each
+    with .id, .latitude, .longitude.
+    start_time: the datetime the trip actually started.
+
+    Returns {stop_id: scheduled_arrival_datetime}, using cumulative
+    haversine distance along the stop sequence at the baseline speed
+    (no traffic factored in -- this is the "promise", not the live
+    prediction).
+    """
+    arrivals = {}
+    cumulative_km = 0.0
+    prev = None
+    for stop in stops:
+        if prev is not None:
+            cumulative_km += haversine_km(prev.latitude, prev.longitude, stop.latitude, stop.longitude)
+        hours = cumulative_km / AVERAGE_SPEED_KMH
+        arrivals[stop.id] = start_time + timedelta(hours=hours)
+        prev = stop
+    return arrivals

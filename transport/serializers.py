@@ -1,3 +1,6 @@
+from datetime import timedelta
+
+from django.utils import timezone
 from rest_framework import serializers
 
 from .eta import estimate_eta_minutes
@@ -21,10 +24,15 @@ class RouteSerializer(serializers.ModelSerializer):
 class TripStopSerializer(serializers.ModelSerializer):
     stop = StopSerializer(read_only=True)
     eta_minutes = serializers.SerializerMethodField()
+    live_arrival_at = serializers.SerializerMethodField()
+    delay_minutes = serializers.SerializerMethodField()
 
     class Meta:
         model = TripStop
-        fields = ["id", "stop", "status", "arrived_at", "eta_minutes"]
+        fields = [
+            "id", "stop", "status", "arrived_at",
+            "eta_minutes", "scheduled_arrival_at", "live_arrival_at", "delay_minutes",
+        ]
 
     def get_eta_minutes(self, obj):
         trip = obj.trip
@@ -34,6 +42,31 @@ class TripStopSerializer(serializers.ModelSerializer):
             trip.last_lat, trip.last_lng, obj.stop.latitude, obj.stop.longitude,
             traffic_detected=trip.traffic_detected, alt_route_active=trip.alt_route_active,
         )
+
+    def get_live_arrival_at(self, obj):
+        """The live, continuously-recalculated prediction, as an
+        absolute time -- distinct from scheduled_arrival_at, which is
+        fixed once the trip starts. Both are served so every client
+        (Parent/Passenger/Driver/Organization) reads the same numbers
+        instead of computing their own from raw minutes.
+
+        Explicitly localized to match how DRF renders scheduled_arrival_at
+        (a direct model field) -- without this, a SerializerMethodField
+        returning a raw datetime serializes in UTC while the model field
+        serializes in the active timezone, which is the same instant but
+        looks inconsistent in the JSON."""
+        eta_minutes = self.get_eta_minutes(obj)
+        if eta_minutes is None:
+            return None
+        return timezone.localtime(timezone.now() + timedelta(minutes=eta_minutes))
+
+    def get_delay_minutes(self, obj):
+        """Positive = running late vs. the original schedule.
+        Negative = running early (e.g. alternate route beat the plan)."""
+        live = self.get_live_arrival_at(obj)
+        if live is None or obj.scheduled_arrival_at is None:
+            return None
+        return round((live - obj.scheduled_arrival_at).total_seconds() / 60)
 
 
 class TripPassengerSerializer(serializers.ModelSerializer):

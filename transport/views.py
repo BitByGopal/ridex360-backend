@@ -1,5 +1,5 @@
 from datetime import date
-
+from .eta import compute_scheduled_arrivals
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
@@ -135,6 +135,16 @@ class StartTripView(APIView):
         trip.status = Trip.Status.ACTIVE
         trip.started_at = timezone.now()
         trip.save()
+
+        # Lock in the "promised" arrival times for this trip, based on
+        # the route's stop sequence at baseline speed -- these never
+        # change again, even as live conditions do.
+        stops = [ts.stop for ts in trip.trip_stops.select_related("stop").order_by("stop__sequence")]
+        scheduled = compute_scheduled_arrivals(stops, trip.started_at)
+        for trip_stop in trip.trip_stops.all():
+            trip_stop.scheduled_arrival_at = scheduled.get(trip_stop.stop_id)
+            trip_stop.save(update_fields=["scheduled_arrival_at"])
+
         return Response(TripSerializer(trip).data)
 
 
