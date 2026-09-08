@@ -1,5 +1,5 @@
 from datetime import date
-from .eta import compute_scheduled_arrivals
+#from .eta import compute_scheduled_arrivals
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
@@ -7,11 +7,16 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import GPSPing, Passenger, Trip, TripPassenger, TripStop
-from .permissions import IsDriver, IsParent
+#from .models import GPSPing, Passenger, Trip, TripPassenger, TripStop
+#from .permissions import IsDriver, IsParent
 from .serializers import (
     GPSPingInputSerializer, PassengerSerializer, TripSerializer,
 )
+
+from django.db.models import Count, Q
+from .models import GPSPing, Organization, Passenger, Route, Trip, TripPassenger, TripStop, Vehicle
+from .permissions import IsDriver, IsOrgAdmin, IsParent
+from .eta import compute_scheduled_arrivals, estimate_eta_minutes
 
 
 class MeView(APIView):
@@ -282,3 +287,118 @@ class ClearTrafficView(APIView):
         trip.alt_route_active = False
         trip.save()
         return Response(TripSerializer(trip).data)
+
+
+
+# ---------------------------------------------------------------------
+# Organization dashboard -- Phase 1 (Dashboard metrics + Live Fleet)
+# ---------------------------------------------------------------------
+
+def _org_for_admin(user):
+    """
+    Scopes an org_admin to their assigned organization. Falls back to
+    the first Organization in the database for a superuser created
+    without one attached (e.g. the initial ensure_superuser account) --
+    fine for a single-org pilot; revisit once there's more than one
+    real organization on the platform.
+    """
+    if user.organization:
+        return user.organization
+    return Organization.objects.first()
+
+
+class OrgDashboardMetricsView(APIView):
+    """
+    Answers "what is happening across my entire transportation
+    operation right now" in one call. Every number here is a real
+    query against the same data Parent/Driver already read and write --
+    nothing here is mocked or hardcoded.
+    """
+
+    permission_classes = [IsOrgAdmin]
+
+    def get(self, request):
+        org = _org_for_admin(request.user)
+        if org is None:
+            return Response({"detail": "No organization found."}, status=404)
+
+        today = date.today()
+        User = request.user.__class__
+
+        todays_trips = Trip.objects.filter(route__organization=org, date=today)
+        active_driver_ids = todays_trips.exclude(driver=None).values_list("driver_id", flat=True).distinct()
+
+        data = {
+            "organization": {"id": str(org.id), "name": org.name, "org_type": org.org_type},
+            "total_vehicles": Vehicle.objects.filter(organization=org).count(),
+            "active_vehicles": Vehicle.objects.filter(organization=org, is_active=True).count(),
+            "total_drivers": User.objects.filter(organization=org, role="driver").count(),
+            "active_drivers": active_driver_ids.count(),
+            "total_passengers": Passenger.objects.filter(organization=org, active=True).count(),
+            "total_parents": User.objects.filter(role="parent", wards__organization=org).distinct().count(),
+            "total_employees": User.objects.filter(organization=org, role__in=["driver", "org_admin"]).count(),
+            "active_routes": Route.objects.filter(organization=org, is_active=True).count(),
+            "todays_trips": todays_trips.count(),
+            # Placeholder proxy until the full Safety & Alerts Center
+            # (Phase 4) exists -- counts trips currently flagged with
+            # traffic, which is real data, just not yet a full alerts model.
+            "active_alerts": todays_trips.filter(traffic_detected=True).count(),
+        }
+        return Response(data)
+
+
+class OrgLiveFleetView(APIView):
+    """
+    One row per trip running today for this organization -- vehicle,
+    driver, route, live position, next-stop ETA/delay, and passenger
+    counts. This is the same Trip/TripStop/TripPassenger data the
+    Driver and Parent apps already read; nothing new is computed here
+    except aggregating it into one list for the org view.
+    """
+
+    permission_classes = [IsOrgAdmin]
+
+    def get(self, request):
+        org = _org_for_admin(request.user)
+        if org is None:
+            return Response({"detail": "No organization found."}, status=404)
+
+        trips = Trip.objects.filter(route__organization=org, date=date.today()).select_related(
+            "route", "vehicle", "driver"
+        ).prefetch_related("trip_stops__stop", "trip_passengers")
+
+        results = []
+        for trip in trips:
+            next_stop = trip.trip_stops.exclude(status__in=["arrived", "skipped"]).order_by("stop__sequence").first()
+            eta_minutes = None
+            if next_stop and trip.last_lat is not None:
+                eta_minutes = estimate_eta_minutes(
+                    trip.last_lat, trip.last_lng, next_stop.stop.latitude, next_stop.stop.longitude,
+                    traffic_detected=trip.traffic_detected, alt_route_active=trip.alt_route_active,
+                )
+
+            total_passengers = trip.trip_passengers.count()
+            boarded = trip.trip_passengers.filter(status__in=["boarded", "dropped_off"]).count()
+            absent = trip.trip_passengers.filter(status__in=["absent", "no_show"]).count()
+
+            results.append({
+                "trip_id": str(trip.id),
+                "vehicle_label": trip.vehicle.label if trip.vehicle else None,
+                "driver_name": trip.driver.get_full_name() if trip.driver else None,
+                "route_name": trip.route.name,
+                "route_type": trip.route.route_type,
+                "status": trip.status,
+                "is_replacement_driver": trip.is_replacement_driver,
+                "last_lat": trip.last_lat,
+                "last_lng": trip.last_lng,
+                "last_ping_at": trip.last_ping_at,
+                "traffic_detected": trip.traffic_detected,
+                "alt_route_active": trip.alt_route_active,
+                "next_stop_name": next_stop.stop.name if next_stop else None,
+                "eta_minutes": eta_minutes,
+                "passengers_total": total_passengers,
+                "passengers_boarded": boarded,
+                "passengers_absent": absent,
+            })
+
+        return Response(results)

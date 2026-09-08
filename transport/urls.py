@@ -41,5 +41,10 @@ urlpatterns = [
     path("driver/trips/<uuid:trip_id>/traffic/detect/", views.DetectTrafficView.as_view(), name="trip-traffic-detect"),
     path("driver/trips/<uuid:trip_id>/traffic/use-alternate/", views.UseAlternateRouteView.as_view(), name="trip-traffic-alt"),
     path("driver/trips/<uuid:trip_id>/traffic/clear/", views.ClearTrafficView.as_view(), name="trip-traffic-clear"),
+
+        # Organization
+    path("org/dashboard/", views.OrgDashboardMetricsView.as_view(), name="org-dashboard"),
+    path("org/fleet/live/", views.OrgLiveFleetView.as_view(), name="org-fleet-live"),
+
 ]
 
