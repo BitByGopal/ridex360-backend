@@ -4,7 +4,7 @@ services:
     env: python
     plan: free
     buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput"
-    startCommand: "python manage.py migrate && python manage.py ensure_superuser && python manage.py seed_demo && gunicorn ridex360.wsgi"
+    startCommand: "python manage.py migrate && python manage.py ensure_superuser && python manage.py ensure_org_admin && python manage.py seed_demo && gunicorn ridex360.wsgi"
     envVars:
       - key: SECRET_KEY
         generateValue: true
@@ -22,6 +22,10 @@ services:
         fromDatabase:
           name: ridex360-db
           property: connectionString
+      - key: ORG_ADMIN_USERNAME
+        value: orgadmin1
+      - key: ORG_ADMIN_PASSWORD
+        sync: false
 
 databases:
   - name: ridex360-db
