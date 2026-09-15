@@ -71,10 +71,22 @@ class TripStopSerializer(serializers.ModelSerializer):
 
 class TripPassengerSerializer(serializers.ModelSerializer):
     passenger_name = serializers.CharField(source="passenger.full_name", read_only=True)
+    passenger_detail = serializers.CharField(source="passenger.detail", read_only=True)
+    pickup_stop_id = serializers.SerializerMethodField()
+    pickup_stop_name = serializers.SerializerMethodField()
 
     class Meta:
         model = TripPassenger
-        fields = ["id", "passenger", "passenger_name", "status", "boarded_at", "dropped_off_at"]
+        fields = [
+            "id", "passenger", "passenger_name", "passenger_detail",
+            "pickup_stop_id", "pickup_stop_name", "status", "boarded_at", "dropped_off_at",
+        ]
+
+    def get_pickup_stop_id(self, obj):
+        return str(obj.passenger.pickup_stop_id) if obj.passenger.pickup_stop_id else None
+
+    def get_pickup_stop_name(self, obj):
+        return obj.passenger.pickup_stop.name if obj.passenger.pickup_stop else None
 
 
 class TripSerializer(serializers.ModelSerializer):

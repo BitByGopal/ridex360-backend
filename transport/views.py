@@ -18,6 +18,28 @@ from .models import GPSPing, Organization, Passenger, Route, Trip, TripPassenger
 from .permissions import IsDriver, IsOrgAdmin, IsParent
 from .eta import compute_scheduled_arrivals, estimate_eta_minutes
 
+def _maybe_mark_stop_arrived(trip, passenger):
+    """
+    A stop is considered 'arrived' once every passenger assigned to it
+    has been actioned (boarded, dropped off, absent, or no-show) --
+    there's no separate 'mark stop arrived' button, since in practice
+    the driver's real actions ARE the signal that they've reached that
+    stop. Mirrors the existing absence-triggers-skip logic.
+    """
+    stop = passenger.pickup_stop
+    if stop is None:
+        return
+    trip_stop = TripStop.objects.filter(trip=trip, stop=stop).first()
+    if trip_stop is None or trip_stop.status in [TripStop.Status.ARRIVED, TripStop.Status.SKIPPED]:
+        return
+    still_pending = TripPassenger.objects.filter(
+        trip=trip, passenger__pickup_stop=stop,
+        status__in=[TripPassenger.Status.SCHEDULED, TripPassenger.Status.WAITING],
+    ).exists()
+    if not still_pending:
+        trip_stop.status = TripStop.Status.ARRIVED
+        trip_stop.arrived_at = timezone.now()
+        trip_stop.save()
 
 class MeView(APIView):
     """Returns the logged-in user's role + basic profile -- the mobile
@@ -158,11 +180,34 @@ class CompleteTripView(APIView):
 
     def post(self, request, trip_id):
         trip = get_object_or_404(Trip, id=trip_id, driver=request.user)
+        trip_stops = list(trip.trip_stops.select_related("stop").order_by("stop__sequence"))
+
+        # Every stop except the final one (the return-to-school leg)
+        # must already be arrived or skipped before the trip can
+        # complete -- prevents ending a route with pickups still
+        # outstanding. The final stop is handled by completion itself,
+        # below, since it has no passengers of its own to trigger it.
+        unhandled = [
+            ts.stop.name for ts in trip_stops[:-1]
+            if ts.status not in [TripStop.Status.ARRIVED, TripStop.Status.SKIPPED]
+        ]
+        if unhandled:
+            return Response(
+                {"detail": f"Cannot complete trip -- stops not yet reached: {', '.join(unhandled)}"},
+                status=400,
+            )
+
+        if trip_stops:
+            final_stop = trip_stops[-1]
+            if final_stop.status not in [TripStop.Status.ARRIVED, TripStop.Status.SKIPPED]:
+                final_stop.status = TripStop.Status.ARRIVED
+                final_stop.arrived_at = timezone.now()
+                final_stop.save()
+
         trip.status = Trip.Status.COMPLETED
         trip.completed_at = timezone.now()
         trip.save()
         return Response(TripSerializer(trip).data)
-
 
 class GPSPingView(APIView):
     """
@@ -210,6 +255,7 @@ class PassengerBoardedView(APIView):
         tp.status = TripPassenger.Status.BOARDED
         tp.boarded_at = timezone.now()
         tp.save()
+        _maybe_mark_stop_arrived(trip, tp.passenger)
         return Response(TripSerializer(trip).data)
 
 
@@ -222,6 +268,7 @@ class PassengerDroppedOffView(APIView):
         tp.status = TripPassenger.Status.DROPPED_OFF
         tp.dropped_off_at = timezone.now()
         tp.save()
+        _maybe_mark_stop_arrived(trip, tp.passenger)
         return Response(TripSerializer(trip).data)
 
 
@@ -236,6 +283,7 @@ class PassengerNoShowView(APIView):
         tp = get_object_or_404(TripPassenger, id=trip_passenger_id, trip=trip)
         tp.status = TripPassenger.Status.NO_SHOW
         tp.save()
+        _maybe_mark_stop_arrived(trip, tp.passenger)
         return Response(TripSerializer(trip).data)
 
 
