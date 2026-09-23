@@ -47,13 +47,13 @@ class RouteAdmin(admin.ModelAdmin):
 class TripStopInline(admin.TabularInline):
     model = TripStop
     extra = 0
-    readonly_fields = ("stop",)
+    
 
 
 class TripPassengerInline(admin.TabularInline):
     model = TripPassenger
     extra = 0
-    readonly_fields = ("passenger",)
+    
 
 
 @admin.register(Trip)
