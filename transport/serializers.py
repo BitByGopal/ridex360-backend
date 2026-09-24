@@ -3,7 +3,7 @@ from datetime import timedelta
 from django.utils import timezone
 from rest_framework import serializers
 
-from .eta import estimate_eta_minutes
+from .eta import estimate_eta_minutes, haversine_km
 from .models import GPSPing, Passenger, Route, Stop, Trip, TripPassenger, TripStop
 
 
@@ -44,25 +44,12 @@ class TripStopSerializer(serializers.ModelSerializer):
         )
 
     def get_live_arrival_at(self, obj):
-        """The live, continuously-recalculated prediction, as an
-        absolute time -- distinct from scheduled_arrival_at, which is
-        fixed once the trip starts. Both are served so every client
-        (Parent/Passenger/Driver/Organization) reads the same numbers
-        instead of computing their own from raw minutes.
-
-        Explicitly localized to match how DRF renders scheduled_arrival_at
-        (a direct model field) -- without this, a SerializerMethodField
-        returning a raw datetime serializes in UTC while the model field
-        serializes in the active timezone, which is the same instant but
-        looks inconsistent in the JSON."""
         eta_minutes = self.get_eta_minutes(obj)
         if eta_minutes is None:
             return None
         return timezone.localtime(timezone.now() + timedelta(minutes=eta_minutes))
 
     def get_delay_minutes(self, obj):
-        """Positive = running late vs. the original schedule.
-        Negative = running early (e.g. alternate route beat the plan)."""
         live = self.get_live_arrival_at(obj)
         if live is None or obj.scheduled_arrival_at is None:
             return None
@@ -95,17 +82,37 @@ class TripSerializer(serializers.ModelSerializer):
     trip_passengers = TripPassengerSerializer(many=True, read_only=True)
     vehicle_label = serializers.CharField(source="vehicle.label", read_only=True)
     driver_name = serializers.CharField(source="driver.get_full_name", read_only=True)
+    driver_phone = serializers.CharField(source="driver.phone", read_only=True)
+    current_speed_kmh = serializers.SerializerMethodField()
 
     class Meta:
         model = Trip
         fields = [
             "id", "route", "date", "status", "vehicle", "vehicle_label",
-            "driver", "driver_name", "is_replacement_driver",
+            "driver", "driver_name", "driver_phone", "is_replacement_driver",
             "started_at", "completed_at",
-            "last_lat", "last_lng", "last_ping_at",
+            "last_lat", "last_lng", "last_ping_at", "current_speed_kmh",
             "traffic_detected", "alt_route_active",
             "trip_stops", "trip_passengers",
         ]
+
+    def get_current_speed_kmh(self, obj):
+        """
+        Computed from the two most recent real GPS pings -- not
+        simulated. Returns None until at least two pings exist (i.e.
+        right when a trip starts), which is the honest state rather
+        than showing a fake 0 km/h.
+        """
+        pings = list(obj.gps_pings.order_by("-recorded_at")[:2])
+        if len(pings) < 2:
+            return None
+        newer, older = pings[0], pings[1]
+        seconds = (newer.recorded_at - older.recorded_at).total_seconds()
+        if seconds <= 0:
+            return None
+        distance_km = haversine_km(older.latitude, older.longitude, newer.latitude, newer.longitude)
+        speed = distance_km / (seconds / 3600)
+        return round(speed, 1)
 
 
 class PassengerSerializer(serializers.ModelSerializer):
