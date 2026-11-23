@@ -44,7 +44,7 @@ class RouteAdmin(admin.ModelAdmin):
     inlines = [StopInline]
 
 
-class TripStopInline(admin.TabularInline):
+class TripStopInline(admin.TabularInline): 
     model = TripStop
     extra = 0
     
