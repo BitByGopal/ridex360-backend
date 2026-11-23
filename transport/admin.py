@@ -33,7 +33,7 @@ class VehicleAdmin(admin.ModelAdmin):
 
 
 class StopInline(admin.TabularInline):
-    model = Stop
+    model = Stop 
     extra = 1
 
 
